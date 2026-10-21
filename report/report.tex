@@ -1,0 +1,102 @@
+% Assignment 1 report template. At most three pages.
+% Fill in every section; keep the headings. Compile with pdflatex.
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{graphicx,booktabs,amsmath,hyperref,listings}
+\usepackage{xcolor}
+\newcommand{\todofill}[1]{\textcolor{red}{\textbf{[FILL: #1]}}}
+\setlength{\parskip}{0.4em}\setlength{\parindent}{0pt}
+\title{Assignment 1: Train a minimal language model from scratch}
+\author{Kamyab Abedi - 12353812}
+\date{\today}
+\begin{document}
+\maketitle
+
+\section{Tokenizer (R1)}
+I built a byte-level BPE tokenizer with the GPT-2 pre-token rule. I first count the pre-tokens, then merge the most frequent pair repeatedly, updating the pair counts incrementally so the loop is fast. All four \texttt{train\_bpe} tests pass.
+
+I trained it on the first 200~MB of TinyStories (allowed by the handout), with vocabulary size 10,000.
+
+\begin{table}[h]\centering
+\begin{tabular}{@{}lr@{}}\toprule
+Item & Result \\\midrule
+Training time & 37.6~s \\
+Counting time & 5.5~s \\
+Merge loop time & about 32.1~s \\
+Peak memory & 1265~MB \\
+Longest token & \verb|b' enthusiastically'| (17 bytes) \\
+Distinct pre-tokens (200~MB) & 26,993 \\\bottomrule
+\end{tabular}\end{table}
+
+
+Because \texttt{train.bin} and \texttt{val.bin} were not on Moodle, I created them myself with \texttt{prepare\_data.py}.
+
+\section{Sanity checks (R2)}
+I wrote all model and training parts myself (softmax, cross-entropy, gradient clipping, \texttt{get\_batch}, checkpoints, AdamW, cosine schedule, Linear, Embedding, RMSNorm, SwiGLU, RoPE, attention with grouped-query attention, Transformer block, language model, \texttt{count\_params}, \texttt{count\_flops}, \texttt{generate}). All tests in \texttt{test\_model.py}, \texttt{test\_nn\_utils.py}, \texttt{test\_optimizer.py} and \texttt{test\_data.py} pass. My functions match Table~1 of the handout: 22,696,448 parameters and 37,240,832 forward FLOPs per token.
+\begin{itemize}\itemsep0pt
+\item \textbf{Initial loss:} about 9.2 is expected ($\ln 10{,}000$).
+\item \textbf{Resume test:} I stopped a run and continued from the checkpoint; it reached 1000 steps with validation loss 2.1825, and the loss continue correctly.
+\item \textbf{Smoke test:} 200 steps, validation loss 3.0905.
+\end{itemize}
+
+\section{Learning-rate sweep (R3)}
+Each run used 3,000 steps (the handout says 4,883; I had too little time).
+\begin{table}[h]\centering
+\begin{tabular}{@{}lr@{}}\toprule
+Learning rate & Validation loss \\\midrule
+$3\times10^{-4}$ & 2.0721 \\
+$10^{-3}$ & 1.7912 \\
+$3\times10^{-3}$ & 1.7794 \\
+$10^{-2}$ & not run \\\bottomrule
+\end{tabular}\end{table}
+The best rate is $3\times10^{-3}$, which I chose. The loss is clearly higher at $3\times10^{-4}$. The gap between $10^{-3}$ and $3\times10^{-3}$ is only 0.012 and, with a single seed, may be noise. Since $10^{-2}$ was not run, I cannot see the upper side of the U-shape.
+
+\section{Reference run (R4)}
+
+The handout asks for 24,414 steps ($2\times10^{8}$ tokens), which needs about 2 hours at my speed.
+
+In the sweep runs my speed was about 26.7k tokens/s with MFU about 4.6\% (eager mode with autocast).
+
+\section{Efficiency table (R5)}
+\begin{table}[h]\centering
+\begin{tabular}{@{}lrr@{}}\toprule
+Configuration & tokens/s & MFU \\\midrule
+eager fp32 & & \\
++ autocast & about 26.7k & about 4.6\% \\
++ \texttt{F.scaled\_dot\_product\_attention} & not done & not done \\
++ fused \texttt{AdamW} & not done & not done \\
++ \texttt{torch.compile} & not done & not done \\\bottomrule
+\end{tabular}\end{table}
+I measured only the autocast row; the fp32 baseline and the other changes were not done, so I cannot say which change moved which part of the profile.
+
+\section{Ablation (R6)}
+\textbf{No warmup.} I removed warmup and kept everything else the same (lr $3\times10^{-3}$, 3,000 steps, same seed).
+\begin{itemize}\itemsep0pt
+\item \textbf{Measurement:} validation loss 1.926 against 1.779 with warmup: +0.147, about 8\% worse. Training did not diverge.
+\item \textbf{Explanation (hypothesis, not proven):} at the start Adam has few gradients, so its scale estimate is poor, and a full-size step wastes early progress.
+\end{itemize}
+The gap (0.147) is much larger than the 0.012 gap in the sweep, so the direction is probably real, but I have only one seed.
+
+\section{What went wrong (R8)}
+\begin{itemize}\itemsep0pt
+\item My Mac is Intel and PyTorch 2.14 has no wheel for it, so I could not install the environment locally with \texttt{uv}; I used Colab for tests and training.
+\item One Colab run used a fresh copy of the starter kit instead of my code, so all tests failed with \texttt{NotImplementedError}. After uploading my own folder the tests passed.
+\item \texttt{train.bin} and \texttt{val.bin} were not on Moodle (Lab~1 was after the deadline), so I had to build my own tokenizer first, which took a lot of time.
+
+\end{itemize}
+\textbf{Limitations.} The sweep has 3,000 steps and only three learning rates; all runs use one seed, so small differences are unreliable; the reference run, efficiency table, samples and some tokenizer numbers are not done or shortened; MFU is low (about 4.6\%) because the speed improvements were not done; I had very little time before the deadline.
+
+\appendix
+\section{Run table}
+% generated from results.json: every run with lr, steps, tokens, val loss, tokens/s.
+\begin{table}[h]\centering
+\begin{tabular}{@{}lrrr@{}}\toprule
+Run & lr & steps & val loss \\\midrule
+smoke test & -- & 200 & 3.0905 \\
+resume test & -- & 1000 & 2.1825 \\
+sweep & $3\times10^{-4}$ & 3000 & 2.0721 \\
+sweep & $10^{-3}$ & 3000 & 1.7912 \\
+sweep & $3\times10^{-3}$ & 3000 & 1.7794 \\
+no warmup & $3\times10^{-3}$ & 3000 & 1.926 \\\bottomrule
+\end{tabular}\end{table}
+\end{document}
